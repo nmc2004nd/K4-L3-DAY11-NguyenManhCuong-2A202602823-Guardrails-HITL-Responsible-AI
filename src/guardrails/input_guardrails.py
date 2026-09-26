@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import re
 from typing import Literal
+import unicodedata
 
 from google.genai import types
 from google.adk.plugins import base_plugin
@@ -42,6 +43,11 @@ InputStatus = Literal["ALLOW", "BLOCK"]
 # Regex is one signal, not the whole security boundary.
 # ============================================================
 
+def _normalize(text: str) -> str:
+    text = unicodedata.normalize("NFKC", text)  # gộp ký tự tương đương (full-width...):ｉｇｎｏｒｅ
+    invisible = dict.fromkeys(map(ord, "\u200b\u200c\u200d\u2060\ufeff\u00ad"), None)
+    return text.translate(invisible)
+
 def detect_injection(user_input: str) -> InputStatus:
     """Detect prompt injection patterns in user input.
 
@@ -51,14 +57,23 @@ def detect_injection(user_input: str) -> InputStatus:
     Returns:
         ``"BLOCK"`` if injection detected (chặn), ``"ALLOW"`` otherwise (cho qua).
     """
+    normalized = _normalize(user_input)
     INJECTION_PATTERNS = [
         # TODO: Add at least 5 regex patterns
         # Example:
         # r"ignore (all )?(previous|above) instructions",
+
+        r"ignore\s+(all\s+)?(previous|above|prior)\s+instructions",
+        r"you\s+are\s+now\b",
+        r"system\s+prompt",
+        r"reveal\s+your\s+(instructions|prompt)",
+        r"pretend\s+(you\s+are|to\s+be)",
+        r"act\s+as\s+(a\s+|an\s+)?unrestricted",
+        r"disregard\s+(all\s+)?(previous|above)\s+instructions",
     ]
 
     for pattern in INJECTION_PATTERNS:
-        if re.search(pattern, user_input, re.IGNORECASE):
+        if re.search(pattern, normalized, re.IGNORECASE):
             return "BLOCK"
     return "ALLOW"
 
@@ -90,6 +105,18 @@ def topic_filter(user_input: str) -> InputStatus:
     # 1. If input contains any blocked topic -> return "BLOCK"
     # 2. If input doesn't contain any allowed topic -> return "BLOCK"
     # 3. Otherwise -> return "ALLOW"
+
+    # 1. Chứa topic cấm -> chặn ngay
+    for topic in BLOCKED_TOPICS:
+        if topic.lower() in input_lower:
+            return "BLOCK"
+
+    # 2. Không chứa topic nào được phép -> chặn
+    if not any(topic.lower() in input_lower for topic in ALLOWED_TOPICS):
+        return "BLOCK"
+
+    # 3. Còn lại là câu hỏi banking hợp lệ
+    return "ALLOW"
 
     pass  # Replace with your implementation
 
@@ -150,6 +177,25 @@ class InputGuardrailPlugin(base_plugin.BasePlugin):
         # 2. Call topic_filter(text)
         #    - If "BLOCK": increment blocked_count, return self._block_response("...")
         # 3. If both return "ALLOW": return None (let message through)
+
+        # 1. Kiểm tra injection trước
+        if detect_injection(text) == "BLOCK":
+            self.blocked_count += 1
+            return self._block_response(
+                "Tin nhắn của bạn chứa nội dung không được phép (prompt injection) "
+                "và đã bị chặn."
+            )
+
+        # 2. Kiểm tra topic
+        if topic_filter(text) == "BLOCK":
+            self.blocked_count += 1
+            return self._block_response(
+                "Xin lỗi, tôi chỉ hỗ trợ các vấn đề liên quan đến ngân hàng "
+                "(tài khoản, giao dịch, lãi suất, tiết kiệm, thẻ tín dụng...)."
+            )
+
+        # 3. An toàn -> trả None để ADK cho tin nhắn đi tiếp
+        return None
 
         pass  # Replace with your implementation
 

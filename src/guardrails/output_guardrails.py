@@ -47,6 +47,12 @@ def content_filter(response: str) -> dict:
         # - National ID (CMND/CCCD): r"\b\d{9}\b|\b\d{12}\b"
         # - API key pattern: r"sk-[a-zA-Z0-9-]+"
         # - Password pattern: r"password\s*[:=]\s*\S+"
+
+        "phone_number": r"\b0\d{9,10}\b",
+        "email": r"[\w.-]+@[\w.-]+\.[a-zA-Z]{2,}",
+        "national_id": r"\b\d{9}\b|\b\d{12}\b",
+        "api_key": r"sk-[a-zA-Z0-9-]+",
+        "password": r"password\s*[:=]\s*\S+",
     }
 
     for name, pattern in PII_PATTERNS.items():
@@ -98,6 +104,11 @@ If UNSAFE, add a brief reason on the next line.
 # )
 
 safety_judge_agent = None  # TODO: Replace with implementation
+safety_judge_agent = llm_agent.LlmAgent(
+    model="gpt-4o-mini",
+    name="safety_judge",
+    instruction=SAFETY_JUDGE_INSTRUCTION,
+)
 judge_runner = None
 
 
@@ -180,6 +191,23 @@ class OutputGuardrailPlugin(base_plugin.BasePlugin):
         #    - If unsafe: replace llm_response.content with a safe message
         #    - Increment self.blocked_count
         # 3. Return llm_response (possibly modified)
+
+        # 1. Regex filter: PII / secrets -> redact (không chặn, chỉ che)
+        filter_result = content_filter(response_text)
+        if not filter_result["safe"]:
+            self.redacted_count += 1
+            llm_response.content = self._make_content(filter_result["redacted"])
+            response_text = filter_result["redacted"]  # judge đánh giá bản đã che
+
+        # 2. LLM-as-Judge -> unsafe thì thay bằng tin nhắn an toàn
+        if self.use_llm_judge:
+            judge_result = await llm_safety_check(response_text)
+            if not judge_result["safe"]:
+                self.blocked_count += 1
+                llm_response.content = self._make_content(
+                    "Xin lỗi, tôi không thể cung cấp câu trả lời này. "
+                    "Vui lòng liên hệ tổng đài VinBank 1800 1800 để được hỗ trợ."
+                )
 
         return llm_response  # TODO: modify if needed
 
