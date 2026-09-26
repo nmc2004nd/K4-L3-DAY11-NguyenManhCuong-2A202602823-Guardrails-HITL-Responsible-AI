@@ -170,6 +170,14 @@ class OutputGuardrailPlugin(base_plugin.BasePlugin):
                     text += part.text
         return text
 
+    @staticmethod
+    def _make_content(text: str) -> types.Content:
+        """Build replacement model content after a redact/block decision."""
+        return types.Content(
+            role="model",
+            parts=[types.Part.from_text(text=text)],
+        )
+
     async def after_model_callback(
         self,
         *,

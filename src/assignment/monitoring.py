@@ -43,6 +43,53 @@ class MonitoringAlert:
 
     def check_metrics(self) -> list[Alert]:
         """TODO: compute rates, append Alert objects when thresholds exceeded."""
+        # Xóa danh sách cảnh báo cũ trước khi kiểm tra lại
+        self.alerts.clear()
+
+        # 1. Kiểm tra tỷ lệ block (Block Rate)
+        block_rate = (
+            self.blocked_requests / self.total_requests
+            if self.total_requests > 0
+            else 0.0
+        )
+        if block_rate > self.block_rate_threshold:
+            self.alerts.append(
+                Alert(
+                    metric="block_rate",
+                    value=block_rate,
+                    threshold=self.block_rate_threshold,
+                    message=f"Cảnh báo: Block rate ({block_rate:.2f}) vượt quá ngưỡng ({self.block_rate_threshold})",
+                )
+            )
+
+        # 2. Kiểm tra số lần chạm giới hạn rate limit (Rate Limit Hits)
+        if self.rate_limit_hits > self.rate_limit_hit_threshold:
+            self.alerts.append(
+                Alert(
+                    metric="rate_limit_hits",
+                    value=float(self.rate_limit_hits),
+                    threshold=float(self.rate_limit_hit_threshold),
+                    message=f"Cảnh báo: Rate limit hits ({self.rate_limit_hits}) vượt quá ngưỡng ({self.rate_limit_hit_threshold})",
+                )
+            )
+
+        # 3. Kiểm tra tỷ lệ thẩm định lỗi (Judge Fail Rate)
+        judge_fail_rate = (
+            self.judge_fails / self.judge_checks
+            if self.judge_checks > 0
+            else 0.0
+        )
+        if judge_fail_rate > self.judge_fail_rate_threshold:
+            self.alerts.append(
+                Alert(
+                    metric="judge_fail_rate",
+                    value=judge_fail_rate,
+                    threshold=self.judge_fail_rate_threshold,
+                    message=f"Cảnh báo: Judge fail rate ({judge_fail_rate:.2f}) vượt quá ngưỡng ({self.judge_fail_rate_threshold})",
+                )
+            )
+
+        return self.alerts
         raise NotImplementedError("Implement MonitoringAlert.check_metrics")
 
     def export_json(self, filepath: str | None = None):
@@ -51,7 +98,15 @@ class MonitoringAlert:
         create ``src/outputs/``.
         """
         _ = filepath or default_metrics_path()
-        raise NotImplementedError("Implement MonitoringAlert.export_json")
+        target_path = Path(filepath or default_metrics_path())
+
+        # Đảm bảo thư mục đích tồn tại (tạo mới nếu chưa có)
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Lưu dữ liệu snapshot ra file JSON
+        with open(target_path, "w", encoding="utf-8") as f:
+            json.dump(self.snapshot(), f, indent=4, ensure_ascii=False)
+        # raise NotImplementedError("Implement MonitoringAlert.export_json")
 
     def snapshot(self) -> dict:
         block_rate = (
